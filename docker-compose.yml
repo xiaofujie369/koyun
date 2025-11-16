@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: koyun-db
+    environment:
+      MYSQL_ROOT_PASSWORD: koyun_root
+      MYSQL_DATABASE: koyun
+      MYSQL_USER: koyun
+      MYSQL_PASSWORD: koyun_pass
+    volumes:
+      - db_data:/var/lib/mysql
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: koyun-backend
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: koyun
+      DB_PASSWORD: koyun_pass
+      DB_NAME: koyun
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    container_name: koyun-frontend
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  db_data:
