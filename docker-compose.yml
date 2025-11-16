@@ -5,10 +5,10 @@ services:
     image: mysql:8.0
     container_name: koyun-db
     environment:
-      MYSQL_ROOT_PASSWORD: koyun_root
-      MYSQL_DATABASE: koyun
-      MYSQL_USER: koyun
-      MYSQL_PASSWORD: koyun_pass
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-koyun_pass}
+      MYSQL_DATABASE: ${DB_NAME:-koyun}
+      MYSQL_USER: ${DB_USER:-koyun}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-koyun_pass}
     volumes:
       - db_data:/var/lib/mysql
     restart: unless-stopped
@@ -16,17 +16,18 @@ services:
   backend:
     build: ./backend
     container_name: koyun-backend
-    environment:
-      DB_HOST: db
-      DB_PORT: 3306
-      DB_USER: koyun
-      DB_PASSWORD: koyun_pass
-      DB_NAME: koyun
+    env_file:
+      - .env
     depends_on:
       - db
     ports:
       - "8000:8000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   frontend:
     image: nginx:alpine
