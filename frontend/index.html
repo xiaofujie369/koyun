@@ -1,87 +1,201 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <title>KOYUN Tunnel Panel</title>
-  <script src="https://unpkg.com/vue@3"></script>
+  <meta charset="UTF-8" />
+  <title>KOYUN Tunnel Panel v0.2.0</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 16px; background: #0f172a; color: #e5e7eb; }
+    h1, h2, h3 { margin: 0 0 12px; }
+    .card { background: #111827; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 10px 25px rgba(0,0,0,.4); }
+    input, select { padding: 6px 8px; border-radius: 6px; border: 1px solid #4b5563; background: #020617; color: #e5e7eb; margin-right: 8px; margin-bottom: 8px; }
+    button { padding: 6px 12px; border-radius: 6px; border: none; background: #22c55e; color: #0b1120; cursor: pointer; font-weight: 600; }
+    button.secondary { background: #3b82f6; color: white; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    ul { list-style: none; padding-left: 0; }
+    li { margin-bottom: 6px; }
+    pre { background: #020617; padding: 12px; border-radius: 8px; max-height: 300px; overflow: auto; font-size: 12px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #1f2937; color: #e5e7eb; margin-right: 6px; }
+  </style>
 </head>
 <body>
 <div id="app">
-  <h2>KOYUN 管理面板</h2>
+  <h1>KOYUN Tunnel Panel <span style="font-size:12px;opacity:.6">v0.2.0</span></h1>
 
-  <section>
-    <h3>节点列表</h3>
-    <input v-model="node.name" placeholder="节点名">
-    <input v-model="node.host" placeholder="IP地址">
-    <button @click="addNode">添加节点</button>
+  <div class="card">
+    <h2>后端状态</h2>
+    <p v-if="health">状态：<span class="pill">OK</span> 版本：{{ health.version }}</p>
+    <p v-else>正在尝试连接后端...</p>
+  </div>
 
+  <div class="card">
+    <h2>节点管理</h2>
+    <div>
+      <input v-model="newNode.name" placeholder="节点名，如 HK-Relay-1">
+      <input v-model="newNode.host" placeholder="备注 IP / 域名">
+      <select v-model="newNode.node_type">
+        <option value="relay">Relay 中转</option>
+        <option value="exit">Exit 落地</option>
+      </select>
+      <button @click="createNode" :disabled="nodeBusy">添加节点</button>
+    </div>
     <ul>
       <li v-for="n in nodes" :key="n.id">
-        {{ n.name }} - {{ n.host }}
-        <button @click="loadConfig(n.id)">生成配置</button>
+        <span class="pill">{{ n.node_type }}</span>
+        <strong>{{ n.name }}</strong> ({{ n.host }})
+        <button class="secondary" @click="selectNode(n)">选中</button>
       </li>
     </ul>
-  </section>
+    <p v-if="selectedNode">当前选中节点：<strong>{{ selectedNode.name }}</strong></p>
+  </div>
 
-  <section>
-    <h3>隧道规则</h3>
-    <input v-model="tunnel.name" placeholder="规则名">
-    <input v-model="tunnel.hostname" placeholder="入口域名">
-    <input v-model.number="tunnel.upstream_port" placeholder="目标端口">
-    <button @click="addRule">添加规则</button>
-  </section>
+  <div class="card">
+    <h2>隧道规则</h2>
+    <div>
+      <input v-model="newTunnel.name" placeholder="规则名，如 hk-ss-8443">
+      <input v-model="newTunnel.hostname" placeholder="入口域名，如 hk1.example.com">
+      <input v-model="newTunnel.upstream_host" placeholder="上游 Host，默认 127.0.0.1">
+      <input v-model.number="newTunnel.upstream_port" placeholder="上游端口，如 8443">
+      <select v-model="newTunnel.protocol">
+        <option value="tcp">tcp</option>
+        <option value="udp">udp</option>
+      </select>
+      <button @click="createTunnel" :disabled="!selectedNode || tunnelBusy">给当前节点添加规则</button>
+    </div>
+    <ul>
+      <li v-for="t in tunnelsForSelected" :key="t.id">
+        <span class="pill">{{ t.protocol }}</span>
+        {{ t.name }} — {{ t.hostname }} → {{ t.upstream_host }}:{{ t.upstream_port }}
+      </li>
+    </ul>
+  </div>
 
-  <section v-if="config">
-    <h3>Cloudflared 配置生成</h3>
-    <pre>{{ config }}</pre>
-  </section>
+  <div class="card" v-if="selectedNode">
+    <h2>Cloudflared config.yml 预览</h2>
+    <button class="secondary" @click="loadConfig">刷新配置</button>
+    <pre v-if="configText">{{ configText }}</pre>
+    <p v-else>点击 “刷新配置” 生成 config.yml 片段。</p>
+  </div>
 </div>
 
 <script>
-const app = Vue.createApp({
+const { createApp } = Vue
+
+createApp({
   data() {
     return {
-      api: window.location.origin.replace('8080', '8000'),
+      apiBase: window.location.origin.replace("8080", "8000"),
+      health: null,
       nodes: [],
-      node: { name: '', host: '' },
-      tunnel: { name: '', hostname: '', upstream_host: '127.0.0.1', upstream_port: null },
-      config: null,
+      selectedNode: null,
+      tunnels: [],
+      newNode: {
+        name: "",
+        host: "",
+        node_type: "relay",
+        description: "",
+        bandwidth_mbps: 100,
+      },
+      newTunnel: {
+        name: "",
+        hostname: "",
+        protocol: "tcp",
+        upstream_host: "127.0.0.1",
+        upstream_port: null,
+      },
+      configText: "",
+      nodeBusy: false,
+      tunnelBusy: false,
+    }
+  },
+  computed: {
+    tunnelsForSelected() {
+      if (!this.selectedNode) return []
+      return this.tunnels.filter(t => t.node_id === this.selectedNode.id)
     }
   },
   mounted() {
-    this.loadNodes()
+    this.fetchHealth()
+    this.fetchNodes()
+    this.fetchTunnels()
   },
   methods: {
-    async loadNodes() {
-      this.nodes = await (await fetch(this.api + '/nodes')).json()
+    async fetchHealth() {
+      try {
+        const res = await fetch(this.apiBase + "/health")
+        if (res.ok) this.health = await res.json()
+      } catch (e) {
+        console.error(e)
+      }
     },
-    async addNode() {
-      await fetch(this.api + '/nodes', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(this.node)
-      })
-      this.node = { name: '', host: '' }
-      this.loadNodes()
+    async fetchNodes() {
+      const res = await fetch(this.apiBase + "/nodes")
+      this.nodes = await res.json()
     },
-    async addRule() {
-      await fetch(this.api + '/tunnels', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          ...this.tunnel,
-          node_id: this.nodes[0].id
+    async fetchTunnels() {
+      const res = await fetch(this.apiBase + "/tunnels")
+      this.tunnels = await res.json()
+    },
+    async createNode() {
+      if (!this.newNode.name || !this.newNode.host) return
+      this.nodeBusy = true
+      try {
+        const res = await fetch(this.apiBase + "/nodes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.newNode),
         })
-      })
+        if (res.ok) {
+          this.newNode.name = ""
+          this.newNode.host = ""
+          await this.fetchNodes()
+        }
+      } finally {
+        this.nodeBusy = false
+      }
     },
-    async loadConfig(id) {
-      let res = await fetch(`${this.api}/nodes/${id}/cloudflared-config`)
-      this.config = (await res.json()).config
-    }
+    selectNode(n) {
+      this.selectedNode = n
+      this.loadConfig()
+    },
+    async createTunnel() {
+      if (!this.selectedNode) return
+      if (!this.newTunnel.name || !this.newTunnel.hostname || !this.newTunnel.upstream_port) return
+      this.tunnelBusy = true
+      try {
+        const payload = {
+          ...this.newTunnel,
+          node_id: this.selectedNode.id,
+          enabled: true,
+        }
+        if (!payload.upstream_host) payload.upstream_host = "127.0.0.1"
+        const res = await fetch(this.apiBase + "/tunnels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+        if (res.ok) {
+          this.newTunnel.name = ""
+          this.newTunnel.hostname = ""
+          this.newTunnel.upstream_port = null
+          await this.fetchTunnels()
+          await this.loadConfig()
+        }
+      } finally {
+        this.tunnelBusy = false
+      }
+    },
+    async loadConfig() {
+      if (!this.selectedNode) return
+      const res = await fetch(`${this.apiBase}/nodes/${this.selectedNode.id}/cloudflared-config`)
+      if (res.ok) {
+        const data = await res.json()
+        this.configText = data.config
+      }
+    },
   }
-})
-
-app.mount('#app')
+}).mount("#app")
 </script>
 </body>
 </html>
