@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>KOYUN Tunnel Panel</title>
+  <script src="https://unpkg.com/vue@3"></script>
+</head>
+<body>
+<div id="app">
+  <h2>KOYUN 管理面板</h2>
+
+  <section>
+    <h3>节点列表</h3>
+    <input v-model="node.name" placeholder="节点名">
+    <input v-model="node.host" placeholder="IP地址">
+    <button @click="addNode">添加节点</button>
+
+    <ul>
+      <li v-for="n in nodes" :key="n.id">
+        {{ n.name }} - {{ n.host }}
+        <button @click="loadConfig(n.id)">生成配置</button>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h3>隧道规则</h3>
+    <input v-model="tunnel.name" placeholder="规则名">
+    <input v-model="tunnel.hostname" placeholder="入口域名">
+    <input v-model.number="tunnel.upstream_port" placeholder="目标端口">
+    <button @click="addRule">添加规则</button>
+  </section>
+
+  <section v-if="config">
+    <h3>Cloudflared 配置生成</h3>
+    <pre>{{ config }}</pre>
+  </section>
+</div>
+
+<script>
+const app = Vue.createApp({
+  data() {
+    return {
+      api: window.location.origin.replace('8080', '8000'),
+      nodes: [],
+      node: { name: '', host: '' },
+      tunnel: { name: '', hostname: '', upstream_host: '127.0.0.1', upstream_port: null },
+      config: null,
+    }
+  },
+  mounted() {
+    this.loadNodes()
+  },
+  methods: {
+    async loadNodes() {
+      this.nodes = await (await fetch(this.api + '/nodes')).json()
+    },
+    async addNode() {
+      await fetch(this.api + '/nodes', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(this.node)
+      })
+      this.node = { name: '', host: '' }
+      this.loadNodes()
+    },
+    async addRule() {
+      await fetch(this.api + '/tunnels', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          ...this.tunnel,
+          node_id: this.nodes[0].id
+        })
+      })
+    },
+    async loadConfig(id) {
+      let res = await fetch(`${this.api}/nodes/${id}/cloudflared-config`)
+      this.config = (await res.json()).config
+    }
+  }
+})
+
+app.mount('#app')
+</script>
+</body>
+</html>
